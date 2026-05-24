@@ -1,0 +1,31 @@
+{
+  "name": "flashlang",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "dev:worker": "npm run build && wrangler dev",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "vitest run",
+    "deploy": "npm run build && wrangler deploy",
+    "d1:migrate:local": "wrangler d1 migrations apply flashlang --local",
+    "d1:migrate:remote": "wrangler d1 migrations apply flashlang --remote",
+    "generate:deck": "node scripts/generate-dutch-deck.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.562.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.7",
+    "vitest": "^4.1.7"
+  }
+}

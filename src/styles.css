@@ -1,0 +1,333 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #17201c;
+  background: #f4f2eb;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.appShell {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(170px, 1fr) auto auto;
+  gap: 18px;
+  min-height: 100vh;
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: 18px;
+  background: #f4f2eb;
+}
+
+.topBar,
+.bottomBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.metric {
+  display: grid;
+  min-width: 70px;
+}
+
+.metric span {
+  font-size: 1.35rem;
+  font-weight: 780;
+  line-height: 1;
+}
+
+.metric small,
+.modeLabel,
+.rankLabel {
+  color: #66716d;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.topActions {
+  display: flex;
+  gap: 8px;
+}
+
+.iconButton {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border: 1px solid #c9d2ce;
+  border-radius: 8px;
+  color: #17201c;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.promptArea {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+  min-height: 190px;
+}
+
+.promptButton {
+  display: grid;
+  place-items: center;
+  width: min(100%, 460px);
+  min-height: 118px;
+  border: 2px solid #17201c;
+  border-radius: 8px;
+  color: #17201c;
+  background: #fdfdfb;
+  font-size: clamp(2.4rem, 9vw, 5.2rem);
+  font-weight: 820;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.promptButton:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.answerReveal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 32px;
+  color: #3c4743;
+  font-size: 1rem;
+}
+
+.answerReveal strong {
+  color: #17201c;
+}
+
+.optionsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.optionButton {
+  min-height: 78px;
+  padding: 12px;
+  border: 1px solid #aebbb6;
+  border-radius: 8px;
+  color: #17201c;
+  background: #ffffff;
+  font-size: clamp(1rem, 4.8vw, 1.45rem);
+  font-weight: 760;
+  line-height: 1.12;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.optionButton:active,
+.iconButton:active,
+.knownButton:active {
+  transform: translateY(1px);
+}
+
+.optionCorrect {
+  border-color: #12784f;
+  color: #0d5137;
+  background: #d8f5e6;
+}
+
+.optionWrong {
+  border-color: #a73d30;
+  color: #7b241b;
+  background: #ffdcd7;
+}
+
+.knownButton {
+  width: 92px;
+  min-height: 44px;
+  border: 1px solid #9da9a4;
+  border-radius: 8px;
+  color: #26302c;
+  background: #e7ebe6;
+  font-weight: 780;
+  cursor: pointer;
+}
+
+.progressLine {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #d2d8d3;
+}
+
+.progressLine span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 2%;
+  background: #24735a;
+}
+
+.settingsPanel {
+  position: fixed;
+  right: max(14px, calc((100vw - 760px) / 2 + 18px));
+  top: 74px;
+  z-index: 5;
+  display: grid;
+  gap: 14px;
+  width: min(360px, calc(100vw - 28px));
+  padding: 16px;
+  border: 1px solid #bac5c0;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 42px rgb(23 32 28 / 18%);
+}
+
+.settingsPanel label {
+  display: grid;
+  gap: 6px;
+  color: #46534e;
+  font-size: 0.88rem;
+  font-weight: 740;
+}
+
+.settingsPanel select,
+.settingsPanel input[type="range"],
+.settingsPanel input[type="password"] {
+  width: 100%;
+}
+
+.settingsPanel select,
+.settingsPanel input[type="password"] {
+  min-height: 40px;
+  border: 1px solid #bcc6c1;
+  border-radius: 8px;
+  background: #fbfcfa;
+  color: #17201c;
+  padding: 0 10px;
+}
+
+.syncRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.syncRow button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #c2ccc7;
+  border-radius: 8px;
+  background: #f6f7f5;
+  color: #17201c;
+  cursor: pointer;
+}
+
+.syncRow button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.syncStatus {
+  min-width: 76px;
+  color: #66716d;
+  font-size: 0.78rem;
+  font-weight: 780;
+  letter-spacing: 0;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.sync-synced {
+  color: #12784f;
+}
+
+.sync-error,
+.sync-unauthorized {
+  color: #a73d30;
+}
+
+.settingsActions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.settingsActions button {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #c2ccc7;
+  border-radius: 8px;
+  background: #f6f7f5;
+  color: #17201c;
+  cursor: pointer;
+}
+
+.warningText {
+  margin: 0;
+  color: #8a4c12;
+  font-size: 0.9rem;
+}
+
+.hiddenInput {
+  display: none;
+}
+
+.is-correct .promptButton {
+  border-color: #12784f;
+}
+
+.is-wrong .promptButton {
+  border-color: #a73d30;
+}
+
+@media (max-width: 560px) {
+  .appShell {
+    gap: 14px;
+    padding: 14px;
+  }
+
+  .optionsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .optionButton {
+    min-height: 64px;
+  }
+
+  .promptButton {
+    min-height: 104px;
+  }
+}

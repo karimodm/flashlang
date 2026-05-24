@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.vite/
+.cache/
+.playwright-mcp/
+.dev.vars
+.wrangler/
+*.tsbuildinfo
+.DS_Store
+npm-debug.log*
