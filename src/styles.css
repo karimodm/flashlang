@@ -47,9 +47,18 @@ button {
   gap: 12px;
 }
 
+.topBar {
+  display: grid;
+  grid-template-columns: minmax(62px, auto) 1fr minmax(62px, auto) auto;
+}
+
 .metric {
   display: grid;
   min-width: 70px;
+}
+
+.metricRight {
+  justify-items: end;
 }
 
 .metric span {
@@ -73,6 +82,32 @@ button {
   gap: 8px;
 }
 
+.languageSwitch {
+  display: inline-flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #c9d2ce;
+  border-radius: 8px;
+  color: #17201c;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.languageSwitch span {
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.languageSwitch small {
+  color: #66716d;
+  font-size: 0.78rem;
+  font-weight: 780;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .iconButton {
   display: grid;
   place-items: center;
@@ -83,6 +118,11 @@ button {
   color: #17201c;
   background: #ffffff;
   cursor: pointer;
+}
+
+.iconButton:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .promptArea {
@@ -113,6 +153,17 @@ button {
   opacity: 1;
 }
 
+.prompt-hanzi {
+  font-size: clamp(3.8rem, 16vw, 7.6rem);
+  line-height: 1.05;
+}
+
+.prompt-pinyin,
+.prompt-meaning {
+  font-size: clamp(2rem, 7vw, 4.2rem);
+  line-height: 1.08;
+}
+
 .answerReveal {
   display: flex;
   flex-wrap: wrap;
@@ -128,13 +179,46 @@ button {
   color: #17201c;
 }
 
+.teachingReveal {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  font-size: 1.15rem;
+}
+
+.continueHint {
+  position: relative;
+  z-index: 8;
+  min-height: 18px;
+  color: #66716d;
+  font-size: 0.78rem;
+  font-weight: 780;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.continueOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 7;
+  display: block;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
 .optionsGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
-.optionButton {
+.studyAction {
+  display: grid;
+}
+
+.optionButton,
+.studyAction button {
   min-height: 78px;
   padding: 12px;
   border: 1px solid #aebbb6;
@@ -148,7 +232,22 @@ button {
   overflow-wrap: anywhere;
 }
 
+.studyAction button {
+  background: #24735a;
+  color: #ffffff;
+}
+
+.answer-hanzi .optionButton {
+  font-size: clamp(2.2rem, 9vw, 4rem);
+  line-height: 1;
+}
+
+.answer-pinyin .optionButton {
+  font-size: clamp(1.2rem, 5vw, 1.8rem);
+}
+
 .optionButton:active,
+.studyAction button:active,
 .iconButton:active,
 .knownButton:active {
   transform: translateY(1px);
@@ -197,7 +296,7 @@ button {
   position: fixed;
   right: max(14px, calc((100vw - 760px) / 2 + 18px));
   top: 74px;
-  z-index: 5;
+  z-index: 6;
   display: grid;
   gap: 14px;
   width: min(360px, calc(100vw - 28px));
@@ -208,12 +307,34 @@ button {
   box-shadow: 0 18px 42px rgb(23 32 28 / 18%);
 }
 
+.settingsBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
 .settingsPanel label {
   display: grid;
   gap: 6px;
   color: #46534e;
   font-size: 0.88rem;
   font-weight: 740;
+}
+
+.settingsPanel .checkRow {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkRow input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
 }
 
 .settingsPanel select,
@@ -295,12 +416,6 @@ button {
   cursor: pointer;
 }
 
-.warningText {
-  margin: 0;
-  color: #8a4c12;
-  font-size: 0.9rem;
-}
-
 .hiddenInput {
   display: none;
 }
@@ -321,6 +436,14 @@ button {
 
   .optionsGrid {
     grid-template-columns: 1fr;
+  }
+
+  .topBar {
+    grid-template-columns: auto 1fr auto;
+  }
+
+  .metricRight {
+    display: none;
   }
 
   .optionButton {

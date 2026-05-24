@@ -1,35 +1,49 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Download, RefreshCw, RotateCcw, Settings, Upload, Volume2 } from "lucide-react";
-import deckData from "./data/dutch-deck.json";
+import dutchDeckData from "./data/dutch-deck.json";
+import mandarinDeckData from "./data/mandarin-deck.json";
 import {
   applyAnswer,
   applyKnown,
   buildStats,
+  labelFor,
   makeCard,
   type AppState,
   type Card,
   type DeckEntry,
+  type LanguageCode,
+  type LanguageSettings,
+  type LanguageState,
   type PromptMode,
 } from "./lib/scheduler";
 import { mergeStateWithSnapshot, sameSnapshot, snapshotFromState, type RemoteSyncSnapshot } from "./lib/sync";
 import "./styles.css";
 
-const deck = (deckData.entries as DeckEntry[]).filter((entry) => entry.translations.length > 0);
-const storageKey = "flashlang:v2";
+const decks: Record<LanguageCode, DeckEntry[]> = {
+  nl: (dutchDeckData.entries as DeckEntry[]).filter((entry) => entry.translations.length > 0),
+  zh: (mandarinDeckData.entries as DeckEntry[]).filter((entry) => entry.translations.length > 0 && entry.pinyin),
+};
+
+const languageLabels: Record<LanguageCode, { flag: string; name: string; ttsLang: string }> = {
+  nl: { flag: "🇳🇱", name: "Dutch", ttsLang: "nl-NL" },
+  zh: { flag: "🇨🇳", name: "Mandarin", ttsLang: "zh-CN" },
+};
+
+const storageKey = "flashlang:v3";
+const legacyStorageKey = "flashlang:v2";
 const syncCodeKey = "flashlang:syncCode";
 const syncRevisionKey = "flashlang:syncRevision";
 const remoteAudio = new Audio();
 
 type SyncStatus = "idle" | "syncing" | "synced" | "error" | "unauthorized";
 
-function createState(): AppState {
+function createLanguageState(language: LanguageCode): LanguageState {
   return {
-    version: 1,
     settings: {
-      activeSize: Math.min(500, deck.length),
+      activeSize: Math.min(language === "zh" ? 300 : 500, decks[language].length),
       promptMode: "mixed",
-      voiceURI: "",
+      audioEnabled: true,
     },
     progress: {},
     totals: {
@@ -40,22 +54,72 @@ function createState(): AppState {
   };
 }
 
+function createState(): AppState {
+  return {
+    version: 2,
+    activeLanguage: "nl",
+    languages: {
+      nl: createLanguageState("nl"),
+      zh: createLanguageState("zh"),
+    },
+  };
+}
+
 function loadState(): AppState {
   try {
     const raw = localStorage.getItem(storageKey);
-    if (!raw) return createState();
-    const parsed = JSON.parse(raw) as AppState;
-    if (parsed.version !== 1) return createState();
-    return {
-      ...createState(),
-      ...parsed,
-      settings: { ...createState().settings, ...parsed.settings },
-      totals: { ...createState().totals, ...parsed.totals },
-      progress: parsed.progress || {},
-    };
+    if (raw) return normalizeState(JSON.parse(raw));
+
+    const legacyRaw = localStorage.getItem(legacyStorageKey);
+    if (legacyRaw) return migrateLegacyState(JSON.parse(legacyRaw));
   } catch {
     return createState();
   }
+  return createState();
+}
+
+function normalizeState(value: Partial<AppState>): AppState {
+  const base = createState();
+  if (value.version !== 2) return base;
+  return {
+    ...base,
+    ...value,
+    activeLanguage: value.activeLanguage === "zh" ? "zh" : "nl",
+    languages: {
+      nl: normalizeLanguageState(value.languages?.nl, base.languages.nl),
+      zh: normalizeLanguageState(value.languages?.zh, base.languages.zh),
+    },
+  };
+}
+
+function normalizeLanguageState(
+  value: { settings?: Partial<LanguageSettings>; progress?: LanguageState["progress"]; totals?: Partial<LanguageState["totals"]> } | undefined,
+  fallback: LanguageState,
+): LanguageState {
+  return {
+    ...fallback,
+    ...value,
+    settings: { ...fallback.settings, ...value?.settings },
+    totals: { ...fallback.totals, ...value?.totals },
+    progress: value?.progress || {},
+  };
+}
+
+function migrateLegacyState(value: {
+  settings?: Partial<LanguageSettings>;
+  progress?: LanguageState["progress"];
+  totals?: LanguageState["totals"];
+}): AppState {
+  const next = createState();
+  next.languages.nl = normalizeLanguageState(
+    {
+      settings: value.settings,
+      progress: value.progress,
+      totals: value.totals,
+    },
+    next.languages.nl,
+  );
+  return next;
 }
 
 function App() {
@@ -67,22 +131,22 @@ function App() {
   const [feedback, setFeedback] = useState<"correct" | "wrong" | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const stateRef = useRef(state);
   const syncCodeRef = useRef(syncCode);
   const syncRevisionRef = useRef(syncRevision);
   const syncInFlightRef = useRef(false);
   const syncQueuedRef = useRef(false);
+  const syncEpochRef = useRef(0);
 
+  const language = state.activeLanguage;
+  const languageState = state.languages[language];
+  const deck = decks[language];
   const activeDeck = useMemo(
-    () => deck.slice(0, Math.min(state.settings.activeSize, deck.length)),
-    [state.settings.activeSize],
+    () => deck.slice(0, Math.min(languageState.settings.activeSize, deck.length)),
+    [deck, languageState.settings.activeSize],
   );
-
-  const voice = useMemo(() => pickVoice(voices, state.settings.voiceURI), [voices, state.settings.voiceURI]);
-  const audioReady = Boolean(voice || voices.some((item) => item.lang.toLowerCase().startsWith("nl")));
-  const stats = useMemo(() => buildStats(state, activeDeck), [state, activeDeck]);
+  const stats = useMemo(() => buildStats(languageState, activeDeck), [activeDeck, languageState]);
 
   useEffect(() => {
     stateRef.current = state;
@@ -92,7 +156,7 @@ function App() {
   useEffect(() => {
     syncCodeRef.current = syncCode;
     localStorage.setItem(syncCodeKey, syncCode);
-    setSyncStatus(syncCode.trim() ? "idle" : "idle");
+    setSyncStatus("idle");
   }, [syncCode]);
 
   useEffect(() => {
@@ -109,27 +173,32 @@ function App() {
   }, [state, syncCode]);
 
   useEffect(() => {
-    const loadVoices = () => setVoices(window.speechSynthesis?.getVoices?.() || []);
-    loadVoices();
-    window.speechSynthesis?.addEventListener?.("voiceschanged", loadVoices);
-    return () => window.speechSynthesis?.removeEventListener?.("voiceschanged", loadVoices);
-  }, []);
+    setCard(makeCard(languageState, activeDeck));
+  }, [activeDeck, languageState.settings.audioEnabled, languageState.settings.promptMode]);
 
   useEffect(() => {
-    setCard(makeCard(state, activeDeck, audioReady));
-  }, [activeDeck, audioReady, state.settings.promptMode]);
+    if (languageState.settings.audioEnabled && card?.promptType === "listen") speak(card.entry.term, card.entry.ttsLang);
+  }, [card, languageState.settings.audioEnabled]);
 
-  useEffect(() => {
-    if (card?.promptType === "listen") speak(card.entry.term, voice);
-  }, [card?.entry.id, card?.promptType, voice]);
+  function setLanguage(nextLanguage: LanguageCode) {
+    setFeedback(null);
+    setSelected(null);
+    setState((current) => ({ ...current, activeLanguage: nextLanguage }));
+  }
 
-  function advance(nextState: AppState, wasWrong = false) {
-    setState(nextState);
-    window.setTimeout(() => {
-      setFeedback(null);
-      setSelected(null);
-      setCard(makeCard(nextState, activeDeck, audioReady));
-    }, wasWrong ? 420 : 260);
+  function updateLanguageState(languageCode: LanguageCode, updater: (current: LanguageState) => LanguageState) {
+    setState((current) => ({
+      ...current,
+      languages: {
+        ...current.languages,
+        [languageCode]: updater(current.languages[languageCode]),
+      },
+    }));
+  }
+
+  function advance(nextLanguageState: LanguageState) {
+    const currentLanguage = language;
+    updateLanguageState(currentLanguage, () => nextLanguageState);
   }
 
   function answer(label: string) {
@@ -137,32 +206,59 @@ function App() {
     const isCorrect = label === card.correctLabel;
     setSelected(label);
     setFeedback(isCorrect ? "correct" : "wrong");
-    advance(applyAnswer(state, card.entry.id, isCorrect), !isCorrect);
+    advance(applyAnswer(languageState, card.progressId, isCorrect));
   }
 
   function markKnown() {
     if (!card || feedback) return;
     setFeedback("correct");
-    advance(applyKnown(state, card.entry.id));
+    advance(applyKnown(languageState, card.progressId));
+  }
+
+  function continueAfterReveal() {
+    if (!feedback) return;
+    const currentLanguageState = stateRef.current.languages[language];
+    setFeedback(null);
+    setSelected(null);
+    setCard(makeCard(currentLanguageState, activeDeck));
   }
 
   function replay() {
-    if (card) speak(card.entry.term, voice);
+    if (card && languageState.settings.audioEnabled) speak(card.entry.term, card.entry.ttsLang);
   }
 
-  function updateSettings(patch: Partial<AppState["settings"]>) {
-    setState((current) => ({
+  function updateSettings(patch: Partial<LanguageSettings>) {
+    updateLanguageState(language, (current) => ({
       ...current,
       settings: { ...current.settings, ...patch },
     }));
   }
 
-  function resetProgress() {
-    if (!confirm("Reset all learning progress on this device?")) return;
-    const next = createState();
-    next.settings = state.settings;
-    setState(next);
-    setCard(makeCard(next, activeDeck, audioReady));
+  async function resetProgress() {
+    const remoteNotice = syncCodeRef.current.trim() ? " and on the sync server" : "";
+    if (!confirm(`Reset ${languageLabels[language].name} learning progress on this device${remoteNotice}?`)) return;
+    const currentLanguage = language;
+    const next = createLanguageState(language);
+    next.settings = languageState.settings;
+    const nextState = {
+      ...stateRef.current,
+      languages: {
+        ...stateRef.current.languages,
+        [currentLanguage]: next,
+      },
+    };
+
+    syncEpochRef.current += 1;
+    syncQueuedRef.current = false;
+    stateRef.current = nextState;
+    setState(nextState);
+    setFeedback(null);
+    setSelected(null);
+    setCard(makeCard(next, activeDeck));
+
+    if (syncCodeRef.current.trim()) {
+      await resetRemoteProgress(currentLanguage);
+    }
   }
 
   function exportProgress() {
@@ -178,11 +274,7 @@ function App() {
   async function importProgress(file: File | undefined) {
     if (!file) return;
     const text = await file.text();
-    const parsed = JSON.parse(text) as AppState;
-    if (parsed.version !== 1 || !parsed.progress || !parsed.settings) {
-      alert("That file does not look like FlashLang progress.");
-      return;
-    }
+    const parsed = normalizeState(JSON.parse(text) as AppState);
     setState(parsed);
     setSettingsOpen(false);
   }
@@ -201,6 +293,7 @@ function App() {
 
     syncInFlightRef.current = true;
     setSyncStatus("syncing");
+    const syncEpoch = syncEpochRef.current;
 
     try {
       const current = stateRef.current;
@@ -224,10 +317,12 @@ function App() {
       if (!response.ok) throw new Error(`Sync failed with HTTP ${response.status}`);
 
       const remote = await response.json() as RemoteSyncSnapshot;
+      if (syncEpoch !== syncEpochRef.current) return;
       const nextState = mergeStateWithSnapshot(current, remote);
       if (!sameSnapshot(snapshotFromState(current), snapshotFromState(nextState))) {
         setState(nextState);
-        setCard(makeCard(nextState, activeDeck, audioReady));
+        const nextLanguageState = nextState.languages[nextState.activeLanguage];
+        setCard(makeCard(nextLanguageState, activeDeck));
       }
       setSyncRevision(remote.revision);
       setSyncStatus("synced");
@@ -242,6 +337,40 @@ function App() {
     }
   }
 
+  async function resetRemoteProgress(languageCode: LanguageCode) {
+    setSyncStatus("syncing");
+    await waitForSyncIdle();
+
+    try {
+      const code = syncCodeRef.current.trim();
+      const response = await fetch(`/api/sync?language=${encodeURIComponent(languageCode)}`, {
+        method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${code}`,
+        },
+      });
+
+      if (response.status === 401) {
+        setSyncStatus("unauthorized");
+        return;
+      }
+
+      if (!response.ok) throw new Error(`Reset failed with HTTP ${response.status}`);
+
+      const remote = await response.json() as RemoteSyncSnapshot;
+      setSyncRevision(remote.revision);
+      setSyncStatus("synced");
+    } catch {
+      setSyncStatus("error");
+    }
+  }
+
+  async function waitForSyncIdle() {
+    for (let attempt = 0; attempt < 100 && syncInFlightRef.current; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
+  }
+
   if (!card) {
     return <main className="appShell">Loading deck...</main>;
   }
@@ -253,12 +382,21 @@ function App() {
           <span>{stats.learned}</span>
           <small>known</small>
         </div>
-        <div className="metric">
-          <span>{state.totals.streak}</span>
+        <button
+          className="languageSwitch"
+          onClick={() => setLanguage(language === "nl" ? "zh" : "nl")}
+          title={`Switch to ${language === "nl" ? "Mandarin" : "Dutch"}`}
+          aria-label={`Switch to ${language === "nl" ? "Mandarin" : "Dutch"}`}
+        >
+          <span>{languageLabels[language].flag}</span>
+          <small>{languageLabels[language].name}</small>
+        </button>
+        <div className="metric metricRight">
+          <span>{languageState.totals.streak}</span>
           <small>streak</small>
         </div>
         <div className="topActions">
-          <button className="iconButton" onClick={replay} title="Replay audio" aria-label="Replay audio">
+          <button className="iconButton" onClick={replay} title="Replay audio" aria-label="Replay audio" disabled={!languageState.settings.audioEnabled}>
             <Volume2 size={21} />
           </button>
           <button className="iconButton" onClick={() => setSettingsOpen((value) => !value)} title="Settings" aria-label="Settings">
@@ -268,19 +406,28 @@ function App() {
       </header>
 
       <section className="promptArea">
-        <div className="modeLabel">{card.promptType === "listen" ? "Listen" : "Read"}</div>
-        <button className="promptButton" onClick={replay} disabled={card.promptType !== "listen"}>
-          {card.promptType === "listen" ? <Volume2 size={56} strokeWidth={1.8} /> : card.entry.term}
+        <div className="modeLabel">{promptTitle(card)}</div>
+        <button
+          className={`promptButton prompt-${card.promptType}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            replay();
+          }}
+          disabled={card.promptType !== "listen"}
+        >
+          {card.promptType === "listen" ? <Volume2 size={56} strokeWidth={1.8} /> : card.promptLabel}
         </button>
-        {feedback && (
-          <div className="answerReveal">
-            <strong>{card.entry.term}</strong>
-            <span>{card.correctLabel}</span>
+        {(feedback || card.isNew) && (
+          <div className={`answerReveal ${card.isNew ? "teachingReveal" : ""}`}>
+            {revealParts(card, Boolean(feedback)).map((part) =>
+              part.strong ? <strong key={part.value}>{part.value}</strong> : <span key={part.value}>{part.value}</span>,
+            )}
           </div>
         )}
+        {feedback && <div className="continueHint">Tap anywhere to continue</div>}
       </section>
 
-      <section className="optionsGrid" aria-label="Translations">
+      <section className={`optionsGrid answer-${card.answerType}`} aria-label="Answers">
         {card.options.map((option) => {
           const stateClass =
             feedback && option === card.correctLabel
@@ -289,7 +436,14 @@ function App() {
                 ? "optionWrong"
                 : "";
           return (
-            <button key={option} className={`optionButton ${stateClass}`} onClick={() => answer(option)}>
+            <button
+              key={option}
+              className={`optionButton ${stateClass}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                answer(option);
+              }}
+            >
               {option}
             </button>
           );
@@ -297,7 +451,15 @@ function App() {
       </section>
 
       <footer className="bottomBar">
-        <button className="knownButton" onClick={markKnown}>Known</button>
+        <button
+          className="knownButton"
+          onClick={(event) => {
+            event.stopPropagation();
+            markKnown();
+          }}
+        >
+          Known
+        </button>
         <div className="progressLine">
           <span style={{ width: `${Math.round((stats.touched / activeDeck.length) * 100)}%` }} />
         </div>
@@ -305,14 +467,31 @@ function App() {
       </footer>
 
       {settingsOpen && (
-        <aside className="settingsPanel" aria-label="Settings">
+        <button
+          className="settingsBackdrop"
+          onClick={() => setSettingsOpen(false)}
+          aria-label="Close settings"
+          title="Close settings"
+        />
+      )}
+
+      {settingsOpen && (
+        <aside className="settingsPanel" aria-label="Settings" onClick={(event) => event.stopPropagation()}>
           <label>
             Prompt
-            <select value={state.settings.promptMode} onChange={(event) => updateSettings({ promptMode: event.target.value as PromptMode })}>
-              <option value="mixed">Mixed</option>
-              <option value="listen">Listen only</option>
-              <option value="read">Read only</option>
+            <select value={languageState.settings.promptMode} onChange={(event) => updateSettings({ promptMode: event.target.value as PromptMode })}>
+              {promptOptions(language).map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
             </select>
+          </label>
+          <label className="checkRow">
+            <input
+              type="checkbox"
+              checked={languageState.settings.audioEnabled}
+              onChange={(event) => updateSettings({ audioEnabled: event.target.checked })}
+            />
+            Audio
           </label>
           <label>
             Active words
@@ -321,23 +500,10 @@ function App() {
               min="100"
               max={deck.length}
               step="100"
-              value={state.settings.activeSize}
+              value={languageState.settings.activeSize}
               onChange={(event) => updateSettings({ activeSize: Number(event.target.value) })}
             />
-            <span>{state.settings.activeSize}</span>
-          </label>
-          <label>
-            Voice
-            <select value={state.settings.voiceURI} onChange={(event) => updateSettings({ voiceURI: event.target.value })}>
-              <option value="">Best Dutch voice</option>
-              {voices
-                .filter((item) => item.lang.toLowerCase().startsWith("nl"))
-                .map((item) => (
-                  <option key={item.voiceURI} value={item.voiceURI}>
-                    {item.name} ({item.lang})
-                  </option>
-                ))}
-            </select>
+            <span>{languageState.settings.activeSize}</span>
           </label>
           <label>
             Sync code
@@ -345,7 +511,7 @@ function App() {
               type="password"
               autoComplete="current-password"
               value={syncCode}
-              placeholder="Private Cloudflare sync code"
+              placeholder="Private sync code"
               onChange={(event) => setSyncCode(event.target.value)}
             />
           </label>
@@ -355,11 +521,10 @@ function App() {
             </button>
             <span className={`syncStatus sync-${syncStatus}`}>{syncStatusLabel(syncStatus)}</span>
           </div>
-          {!audioReady && <p className="warningText">No Dutch browser voice detected. Listen mode will use web audio pronunciation.</p>}
           <div className="settingsActions">
             <button onClick={exportProgress}><Download size={18} /> Export</button>
             <button onClick={() => fileInputRef.current?.click()}><Upload size={18} /> Import</button>
-            <button onClick={resetProgress}><RotateCcw size={18} /> Reset</button>
+            <button onClick={() => void resetProgress()}><RotateCcw size={18} /> Reset</button>
           </div>
           <input
             ref={fileInputRef}
@@ -370,43 +535,58 @@ function App() {
           />
         </aside>
       )}
+      {feedback && (
+        <button
+          className="continueOverlay"
+          onClick={continueAfterReveal}
+          aria-label="Continue to next card"
+          title="Continue"
+        />
+      )}
     </main>
   );
 }
 
-function pickVoice(voices: SpeechSynthesisVoice[], voiceURI: string) {
-  return (
-    voices.find((voice) => voice.voiceURI === voiceURI) ||
-    voices.find((voice) => voice.lang.toLowerCase() === "nl-nl") ||
-    voices.find((voice) => voice.lang.toLowerCase().startsWith("nl")) ||
-    null
-  );
-}
-
-function speak(text: string, voice: SpeechSynthesisVoice | null) {
-  const hasDutchVoice = Boolean(
-    voice || window.speechSynthesis?.getVoices?.().some((item) => item.lang.toLowerCase().startsWith("nl")),
-  );
-
-  if (!("speechSynthesis" in window) || !hasDutchVoice) {
-    playRemoteDutchAudio(text);
-    return;
+function promptOptions(language: LanguageCode) {
+  if (language === "nl") {
+    return [
+      { value: "mixed", label: "Mixed" },
+      { value: "listen", label: "Listen only" },
+      { value: "read", label: "Read only" },
+    ];
   }
-
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = voice?.lang || "nl-NL";
-  utterance.rate = 0.92;
-  utterance.pitch = 1;
-  if (voice) utterance.voice = voice;
-  utterance.onerror = () => playRemoteDutchAudio(text);
-  window.speechSynthesis.speak(utterance);
+  return [
+    { value: "mixed", label: "Guided mix" },
+    { value: "audio", label: "Listen prompts" },
+    { value: "hanzi", label: "Hanzi prompts" },
+    { value: "pinyin", label: "Pinyin prompts" },
+    { value: "meaning", label: "English prompts" },
+  ];
 }
 
-function playRemoteDutchAudio(text: string) {
+function promptTitle(card: Card) {
+  if (card.promptType === "listen") return "Listen";
+  if (card.promptType === "hanzi") return "Hanzi";
+  if (card.promptType === "pinyin") return "Pinyin";
+  if (card.promptType === "meaning") return "Meaning";
+  return "Read";
+}
+
+function revealParts(card: Card, answered: boolean) {
+  const parts = [
+    { value: card.entry.term, type: "hanzi", strong: true },
+    card.entry.pinyin ? { value: card.entry.pinyin, type: "pinyin", strong: false } : null,
+    { value: labelFor(card.entry), type: "meaning", strong: false },
+  ].filter(Boolean) as Array<{ value: string; type: Card["answerType"]; strong: boolean }>;
+
+  if (answered) return parts;
+  return parts.filter((part) => part.type !== card.answerType);
+}
+
+function speak(text: string, ttsLang: string) {
   remoteAudio.pause();
   remoteAudio.currentTime = 0;
-  remoteAudio.src = `/api/tts?tl=nl&q=${encodeURIComponent(text)}`;
+  remoteAudio.src = `/api/tts?tl=${encodeURIComponent(ttsLang)}&q=${encodeURIComponent(text)}`;
   void remoteAudio.play().catch(() => {
     // Browsers may block playback until the speaker button is tapped.
   });

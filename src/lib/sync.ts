@@ -1,8 +1,7 @@
-import type { AppState, Progress } from "./scheduler";
+import type { AppState, LanguageCode, LanguageState, Progress } from "./scheduler";
 
 export type SyncSnapshot = {
-  progress: Record<string, Progress>;
-  totals: AppState["totals"];
+  languages: Record<LanguageCode, Pick<LanguageState, "progress" | "totals">>;
 };
 
 export type RemoteSyncSnapshot = SyncSnapshot & {
@@ -10,7 +9,9 @@ export type RemoteSyncSnapshot = SyncSnapshot & {
   updatedAt?: number;
 };
 
-const emptyTotals: AppState["totals"] = {
+const languages: LanguageCode[] = ["nl", "zh"];
+
+const emptyTotals: LanguageState["totals"] = {
   answered: 0,
   correct: 0,
   streak: 0,
@@ -18,43 +19,43 @@ const emptyTotals: AppState["totals"] = {
 
 export function emptySnapshot(): SyncSnapshot {
   return {
-    progress: {},
-    totals: { ...emptyTotals },
+    languages: {
+      nl: emptyLanguageSnapshot(),
+      zh: emptyLanguageSnapshot(),
+    },
   };
 }
 
 export function snapshotFromState(state: AppState): SyncSnapshot {
-  return normalizeSnapshot({
-    progress: state.progress,
-    totals: state.totals,
-  });
+  return normalizeSnapshot(state);
 }
 
 export function mergeStateWithSnapshot(state: AppState, remote: SyncSnapshot): AppState {
   const merged = mergeSnapshots(snapshotFromState(state), remote);
   return {
     ...state,
-    progress: merged.progress,
-    totals: merged.totals,
+    languages: {
+      nl: {
+        ...state.languages.nl,
+        progress: merged.languages.nl.progress,
+        totals: merged.languages.nl.totals,
+      },
+      zh: {
+        ...state.languages.zh,
+        progress: merged.languages.zh.progress,
+        totals: merged.languages.zh.totals,
+      },
+    },
   };
 }
 
 export function mergeSnapshots(local: SyncSnapshot, remote: SyncSnapshot): SyncSnapshot {
   const left = normalizeSnapshot(local);
   const right = normalizeSnapshot(remote);
-  const progress: Record<string, Progress> = {};
-
-  for (const id of new Set([...Object.keys(left.progress), ...Object.keys(right.progress)])) {
-    const merged = mergeProgress(left.progress[id], right.progress[id]);
-    if (merged) progress[id] = merged;
-  }
-
   return {
-    progress,
-    totals: {
-      answered: Math.max(left.totals.answered, right.totals.answered),
-      correct: Math.max(left.totals.correct, right.totals.correct),
-      streak: Math.max(left.totals.streak, right.totals.streak),
+    languages: {
+      nl: mergeLanguageSnapshots(left.languages.nl, right.languages.nl),
+      zh: mergeLanguageSnapshots(left.languages.zh, right.languages.zh),
     },
   };
 }
@@ -65,7 +66,50 @@ export function sameSnapshot(left: SyncSnapshot, right: SyncSnapshot) {
   return JSON.stringify(normalizedLeft) === JSON.stringify(normalizedRight);
 }
 
-export function normalizeSnapshot(value: Partial<SyncSnapshot> | null | undefined): SyncSnapshot {
+export function normalizeSnapshot(value: unknown): SyncSnapshot {
+  if (hasLegacySnapshot(value)) {
+    return {
+      languages: {
+        nl: normalizeLanguageSnapshot(value as Partial<Pick<LanguageState, "progress" | "totals">>),
+        zh: emptyLanguageSnapshot(),
+      },
+    };
+  }
+
+  const snapshot = value as Partial<SyncSnapshot> | null | undefined;
+  const source = snapshot?.languages && typeof snapshot.languages === "object"
+    ? snapshot.languages
+    : { nl: undefined, zh: undefined };
+  return {
+    languages: {
+      nl: normalizeLanguageSnapshot(source.nl),
+      zh: normalizeLanguageSnapshot(source.zh),
+    },
+  };
+}
+
+function mergeLanguageSnapshots(
+  local: Pick<LanguageState, "progress" | "totals">,
+  remote: Pick<LanguageState, "progress" | "totals">,
+) {
+  const progress: Record<string, Progress> = {};
+
+  for (const id of new Set([...Object.keys(local.progress), ...Object.keys(remote.progress)])) {
+    const merged = mergeProgress(local.progress[id], remote.progress[id]);
+    if (merged) progress[id] = merged;
+  }
+
+  return {
+    progress,
+    totals: {
+      answered: Math.max(local.totals.answered, remote.totals.answered),
+      correct: Math.max(local.totals.correct, remote.totals.correct),
+      streak: Math.max(local.totals.streak, remote.totals.streak),
+    },
+  };
+}
+
+function normalizeLanguageSnapshot(value: Partial<Pick<LanguageState, "progress" | "totals">> | null | undefined) {
   const progress: Record<string, Progress> = {};
   const sourceProgress = value?.progress && typeof value.progress === "object" ? value.progress : {};
 
@@ -116,7 +160,18 @@ function normalizeProgress(value: Progress): Progress {
   };
 }
 
-function normalizeTotals(value: Partial<AppState["totals"]> | null | undefined): AppState["totals"] {
+function emptyLanguageSnapshot() {
+  return {
+    progress: {},
+    totals: { ...emptyTotals },
+  };
+}
+
+function hasLegacySnapshot(value: unknown): value is { progress?: unknown; totals?: unknown } {
+  return Boolean(value && typeof value === "object" && ("progress" in value || "totals" in value));
+}
+
+function normalizeTotals(value: Partial<LanguageState["totals"]> | null | undefined): LanguageState["totals"] {
   return {
     answered: cleanNumber(value?.answered),
     correct: cleanNumber(value?.correct),

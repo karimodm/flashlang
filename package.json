@@ -12,7 +12,10 @@
     "deploy": "npm run build && wrangler deploy",
     "d1:migrate:local": "wrangler d1 migrations apply flashlang --local",
     "d1:migrate:remote": "wrangler d1 migrations apply flashlang --remote",
-    "generate:deck": "node scripts/generate-dutch-deck.mjs"
+    "sync:allocate": "node scripts/allocate-sync-code.mjs",
+    "generate:deck": "node scripts/generate-dutch-deck.mjs && node scripts/generate-mandarin-deck.mjs",
+    "generate:deck:dutch": "node scripts/generate-dutch-deck.mjs",
+    "generate:deck:mandarin": "node scripts/generate-mandarin-deck.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.562.0",
@@ -20,10 +23,10 @@
     "react-dom": "^19.2.3"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^5.1.1",
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
     "typescript": "^5.9.3",
     "vite": "^7.2.7",
     "vitest": "^4.1.7"

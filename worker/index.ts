@@ -1,13 +1,13 @@
+import type { LanguageCode } from "../src/lib/scheduler";
 import { emptySnapshot, mergeSnapshots, normalizeSnapshot, sameSnapshot, type RemoteSyncSnapshot, type SyncSnapshot } from "../src/lib/sync";
 
 type Env = {
   ASSETS: Fetcher;
   DB: D1Database;
-  SYNC_CODE?: string;
 };
 
-const syncId = "default";
 const maxTtsLength = 80;
+const maxSyncCodeLength = 128;
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -22,15 +22,33 @@ export default {
 };
 
 async function handleSync(request: Request, env: Env) {
-  if (request.method !== "GET" && request.method !== "POST") {
+  if (request.method !== "GET" && request.method !== "POST" && request.method !== "DELETE") {
     return json({ error: "method_not_allowed" }, 405);
   }
 
-  const authError = requireAuth(request, env);
-  if (authError) return authError;
+  const syncCode = syncCodeFromRequest(request);
+  if (syncCode instanceof Response) return syncCode;
 
-  const remote = await loadRemoteSnapshot(env);
+  if (!await syncCodeExists(env, syncCode)) return json({ error: "unknown_sync_code" }, 401);
+  await markSyncCodeUsed(env, syncCode);
+  const remote = await loadRemoteSnapshot(env, syncCode);
   if (request.method === "GET") return json(remote);
+
+  if (request.method === "DELETE") {
+    const language = languageFromRequest(request);
+    if (!language) return json({ error: "invalid_language" }, 400);
+    const next: RemoteSyncSnapshot = {
+      ...remote,
+      languages: {
+        ...remote.languages,
+        [language]: emptySnapshot().languages[language],
+      },
+      revision: remote.revision + 1,
+      updatedAt: Date.now(),
+    };
+    await saveRemoteSnapshot(env, syncCode, next);
+    return json(next);
+  }
 
   let incoming: SyncSnapshot;
   try {
@@ -47,7 +65,7 @@ async function handleSync(request: Request, env: Env) {
     revision: remote.revision + 1,
     updatedAt: Date.now(),
   };
-  await saveRemoteSnapshot(env, next);
+  await saveRemoteSnapshot(env, syncCode, next);
   return json(next);
 }
 
@@ -55,14 +73,14 @@ async function handleTts(request: Request, ctx: ExecutionContext) {
   if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
 
   const url = new URL(request.url);
-  const language = url.searchParams.get("tl") || "nl";
+  const language = normalizeTtsLanguage(url.searchParams.get("tl") || "nl");
   const text = (url.searchParams.get("q") || "").trim();
 
-  if (language !== "nl") return json({ error: "unsupported_language" }, 400);
-  if (!isValidTtsText(text)) return json({ error: "invalid_text" }, 400);
+  if (!language) return json({ error: "unsupported_language" }, 400);
+  if (!isValidTtsText(text, language)) return json({ error: "invalid_text" }, 400);
 
   const cacheUrl = new URL(request.url);
-  cacheUrl.search = `?tl=nl&q=${encodeURIComponent(text.toLowerCase())}`;
+  cacheUrl.search = `?tl=${encodeURIComponent(language)}&q=${encodeURIComponent(text.toLowerCase())}`;
   const cacheKey = new Request(cacheUrl.toString(), { method: "GET" });
   const cached = await caches.default.match(cacheKey);
   if (cached) return cached;
@@ -70,7 +88,7 @@ async function handleTts(request: Request, ctx: ExecutionContext) {
   const upstreamUrl = new URL("https://translate.google.com/translate_tts");
   upstreamUrl.searchParams.set("ie", "UTF-8");
   upstreamUrl.searchParams.set("client", "tw-ob");
-  upstreamUrl.searchParams.set("tl", "nl");
+  upstreamUrl.searchParams.set("tl", language);
   upstreamUrl.searchParams.set("q", text);
 
   const upstream = await fetch(upstreamUrl.toString(), {
@@ -93,13 +111,21 @@ async function handleTts(request: Request, ctx: ExecutionContext) {
   return response;
 }
 
-async function loadRemoteSnapshot(env: Env): Promise<RemoteSyncSnapshot> {
+async function syncCodeExists(env: Env, syncCode: string) {
+  const row = await env.DB.prepare("select 1 as ok from sync_codes where code = ?").bind(syncCode).first<{ ok: number }>();
+  return Boolean(row);
+}
+
+async function markSyncCodeUsed(env: Env, syncCode: string) {
+  await env.DB.prepare("update sync_codes set last_used_at = ? where code = ?").bind(Date.now(), syncCode).run();
+}
+
+async function loadRemoteSnapshot(env: Env, syncCode: string): Promise<RemoteSyncSnapshot> {
   const row = await env.DB.prepare(
-    "select revision, progress_json, totals_json, updated_at from sync_state where id = ?",
-  ).bind(syncId).first<{
+    "select revision, snapshot_json, updated_at from sync_state where code = ?",
+  ).bind(syncCode).first<{
     revision: number;
-    progress_json: string;
-    totals_json: string;
+    snapshot_json: string;
     updated_at: number;
   }>();
 
@@ -111,10 +137,7 @@ async function loadRemoteSnapshot(env: Env): Promise<RemoteSyncSnapshot> {
     };
   }
 
-  const snapshot = normalizeSnapshot({
-    progress: parseJson(row.progress_json, {}),
-    totals: parseJson(row.totals_json, {}),
-  });
+  const snapshot = normalizeSnapshot(parseJson(row.snapshot_json, emptySnapshot()));
 
   return {
     ...snapshot,
@@ -123,38 +146,48 @@ async function loadRemoteSnapshot(env: Env): Promise<RemoteSyncSnapshot> {
   };
 }
 
-async function saveRemoteSnapshot(env: Env, snapshot: RemoteSyncSnapshot) {
+async function saveRemoteSnapshot(env: Env, syncCode: string, snapshot: RemoteSyncSnapshot) {
   await env.DB.prepare(
-    `insert into sync_state (id, revision, progress_json, totals_json, updated_at)
-     values (?, ?, ?, ?, ?)
-     on conflict(id) do update set
+    `insert into sync_state (code, revision, snapshot_json, updated_at)
+     values (?, ?, ?, ?)
+     on conflict(code) do update set
        revision = excluded.revision,
-       progress_json = excluded.progress_json,
-       totals_json = excluded.totals_json,
+       snapshot_json = excluded.snapshot_json,
        updated_at = excluded.updated_at`,
   ).bind(
-    syncId,
+    syncCode,
     snapshot.revision,
-    JSON.stringify(snapshot.progress),
-    JSON.stringify(snapshot.totals),
+    JSON.stringify({ languages: snapshot.languages }),
     snapshot.updatedAt || Date.now(),
   ).run();
 }
 
-function requireAuth(request: Request, env: Env) {
-  const expected = (env.SYNC_CODE || "").trim();
-  if (!expected) return json({ error: "sync_code_not_configured" }, 503);
-  const actual = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "").trim() || "";
-  if (actual !== expected) return json({ error: "unauthorized" }, 401);
+function syncCodeFromRequest(request: Request): string | Response {
+  const code = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "").trim() || "";
+  if (!isValidSyncCode(code)) return json({ error: "invalid_sync_code" }, 401);
+  return code;
+}
+
+function languageFromRequest(request: Request): LanguageCode | null {
+  const value = new URL(request.url).searchParams.get("language");
+  return value === "nl" || value === "zh" ? value : null;
+}
+
+function isValidSyncCode(code: string) {
+  return code.length >= 4 && code.length <= maxSyncCodeLength && /^[\x21-\x7e]+$/.test(code);
+}
+
+function normalizeTtsLanguage(value: string) {
+  const normalized = value.toLowerCase();
+  if (normalized === "nl" || normalized === "nl-nl") return "nl";
+  if (normalized === "zh" || normalized === "zh-cn") return "zh-CN";
   return null;
 }
 
-function isValidTtsText(text: string) {
-  return (
-    text.length > 0 &&
-    text.length <= maxTtsLength &&
-    /^[a-zà-ÿ0-9'’.,!? -]+$/i.test(text)
-  );
+function isValidTtsText(text: string, language: string) {
+  if (text.length === 0 || text.length > maxTtsLength) return false;
+  if (language === "zh-CN") return /^[\p{Script=Han}0-9'’.,!?，。！？、 -]+$/u.test(text);
+  return /^[a-zà-ÿ0-9'’.,!? -]+$/i.test(text);
 }
 
 function parseJson<T>(value: string, fallback: T): T {
@@ -176,5 +209,7 @@ function json(body: unknown, status = 200) {
 
 export const testInternals = {
   handleTts,
-  requireAuth,
+  isValidSyncCode,
+  languageFromRequest,
+  syncCodeFromRequest,
 };
